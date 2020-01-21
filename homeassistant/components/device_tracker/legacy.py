@@ -1,31 +1,14 @@
 """Legacy device tracker classes."""
 import asyncio
 from datetime import timedelta
+import hashlib
 from typing import Any, List, Sequence
 
 import voluptuous as vol
 
-from homeassistant.core import callback
-from homeassistant.components import zone
-from homeassistant.components.group import (
-    ATTR_ADD_ENTITIES,
-    ATTR_ENTITIES,
-    ATTR_OBJECT_ID,
-    ATTR_VISIBLE,
-    DOMAIN as DOMAIN_GROUP,
-    SERVICE_SET,
-)
-from homeassistant.components.zone import async_active_zone
-from homeassistant.config import load_yaml_config_file, async_log_exception
-from homeassistant.exceptions import HomeAssistantError
-import homeassistant.helpers.config_validation as cv
-from homeassistant.helpers.entity_registry import async_get_registry
-from homeassistant.helpers.restore_state import RestoreEntity
-from homeassistant.helpers.typing import GPSType, HomeAssistantType
 from homeassistant import util
-import homeassistant.util.dt as dt_util
-from homeassistant.util.yaml import dump
-
+from homeassistant.components import zone
+from homeassistant.config import async_log_exception, load_yaml_config_file
 from homeassistant.const import (
     ATTR_ENTITY_ID,
     ATTR_GPS_ACCURACY,
@@ -37,9 +20,17 @@ from homeassistant.const import (
     CONF_MAC,
     CONF_NAME,
     DEVICE_DEFAULT_NAME,
-    STATE_NOT_HOME,
     STATE_HOME,
+    STATE_NOT_HOME,
 )
+from homeassistant.core import callback
+from homeassistant.exceptions import HomeAssistantError
+import homeassistant.helpers.config_validation as cv
+from homeassistant.helpers.entity_registry import async_get_registry
+from homeassistant.helpers.restore_state import RestoreEntity
+from homeassistant.helpers.typing import GPSType, HomeAssistantType
+import homeassistant.util.dt as dt_util
+from homeassistant.util.yaml import dump
 
 from .const import (
     ATTR_BATTERY,
@@ -60,7 +51,6 @@ from .const import (
 )
 
 YAML_DEVICES = "known_devices.yaml"
-GROUP_NAME_ALL_DEVICES = "all devices"
 EVENT_NEW_DEVICE = "device_tracker_new_device"
 
 
@@ -104,7 +94,6 @@ class DeviceTracker:
             else defaults.get(CONF_TRACK_NEW, DEFAULT_TRACK_NEW)
         )
         self.defaults = defaults
-        self.group = None
         self._is_updating = asyncio.Lock()
 
         for dev in devices:
@@ -230,21 +219,6 @@ class DeviceTracker:
         if device.track:
             await device.async_update_ha_state()
 
-        # During init, we ignore the group
-        if self.group and self.track_new:
-            self.hass.async_create_task(
-                self.hass.async_call(
-                    DOMAIN_GROUP,
-                    SERVICE_SET,
-                    {
-                        ATTR_OBJECT_ID: util.slugify(GROUP_NAME_ALL_DEVICES),
-                        ATTR_VISIBLE: False,
-                        ATTR_NAME: GROUP_NAME_ALL_DEVICES,
-                        ATTR_ADD_ENTITIES: [device.entity_id],
-                    },
-                )
-            )
-
         self.hass.bus.async_fire(
             EVENT_NEW_DEVICE,
             {
@@ -270,27 +244,6 @@ class DeviceTracker:
             await self.hass.async_add_executor_job(
                 update_config, self.hass.config.path(YAML_DEVICES), dev_id, device
             )
-
-    @callback
-    def async_setup_group(self):
-        """Initialize group for all tracked devices.
-
-        This method must be run in the event loop.
-        """
-        entity_ids = [dev.entity_id for dev in self.devices.values() if dev.track]
-
-        self.hass.async_create_task(
-            self.hass.services.async_call(
-                DOMAIN_GROUP,
-                SERVICE_SET,
-                {
-                    ATTR_OBJECT_ID: util.slugify(GROUP_NAME_ALL_DEVICES),
-                    ATTR_VISIBLE: False,
-                    ATTR_NAME: GROUP_NAME_ALL_DEVICES,
-                    ATTR_ENTITIES: entity_ids,
-                },
-            )
-        )
 
     @callback
     def async_update_stale(self, now: dt_util.dt.datetime):
@@ -327,15 +280,15 @@ class DeviceTracker:
 class Device(RestoreEntity):
     """Represent a tracked device."""
 
-    host_name = None  # type: str
-    location_name = None  # type: str
-    gps = None  # type: GPSType
-    gps_accuracy = 0  # type: int
-    last_seen = None  # type: dt_util.dt.datetime
-    consider_home = None  # type: dt_util.dt.timedelta
-    battery = None  # type: int
-    attributes = None  # type: dict
-    icon = None  # type: str
+    host_name: str = None
+    location_name: str = None
+    gps: GPSType = None
+    gps_accuracy: int = 0
+    last_seen: dt_util.dt.datetime = None
+    consider_home: dt_util.dt.timedelta = None
+    battery: int = None
+    attributes: dict = None
+    icon: str = None
 
     # Track if the last update of this device was HOME.
     last_update_home = False
@@ -489,7 +442,7 @@ class Device(RestoreEntity):
         if self.location_name:
             self._state = self.location_name
         elif self.gps is not None and self.source_type == SOURCE_TYPE_GPS:
-            zone_state = async_active_zone(
+            zone_state = zone.async_active_zone(
                 self.hass, self.gps[0], self.gps[1], self.gps_accuracy
             )
             if zone_state is None:
@@ -532,7 +485,7 @@ class Device(RestoreEntity):
 class DeviceScanner:
     """Device scanner object."""
 
-    hass = None  # type: HomeAssistantType
+    hass: HomeAssistantType = None
 
     def scan_devices(self) -> List[str]:
         """Scan for devices."""
@@ -575,21 +528,24 @@ async def async_load_config(
 
     This method is a coroutine.
     """
-    dev_schema = vol.Schema(
-        {
-            vol.Required(CONF_NAME): cv.string,
-            vol.Optional(CONF_ICON, default=None): vol.Any(None, cv.icon),
-            vol.Optional("track", default=False): cv.boolean,
-            vol.Optional(CONF_MAC, default=None): vol.Any(
-                None, vol.All(cv.string, vol.Upper)
-            ),
-            vol.Optional(CONF_AWAY_HIDE, default=DEFAULT_AWAY_HIDE): cv.boolean,
-            vol.Optional("gravatar", default=None): vol.Any(None, cv.string),
-            vol.Optional("picture", default=None): vol.Any(None, cv.string),
-            vol.Optional(CONF_CONSIDER_HOME, default=consider_home): vol.All(
-                cv.time_period, cv.positive_timedelta
-            ),
-        }
+    dev_schema = vol.All(
+        cv.deprecated(CONF_AWAY_HIDE, invalidation_version="0.107.0"),
+        vol.Schema(
+            {
+                vol.Required(CONF_NAME): cv.string,
+                vol.Optional(CONF_ICON, default=None): vol.Any(None, cv.icon),
+                vol.Optional("track", default=False): cv.boolean,
+                vol.Optional(CONF_MAC, default=None): vol.Any(
+                    None, vol.All(cv.string, vol.Upper)
+                ),
+                vol.Optional(CONF_AWAY_HIDE, default=DEFAULT_AWAY_HIDE): cv.boolean,
+                vol.Optional("gravatar", default=None): vol.Any(None, cv.string),
+                vol.Optional("picture", default=None): vol.Any(None, cv.string),
+                vol.Optional(CONF_CONSIDER_HOME, default=consider_home): vol.All(
+                    cv.time_period, cv.positive_timedelta
+                ),
+            }
+        ),
     )
     result = []
     try:
@@ -635,7 +591,6 @@ def get_gravatar_for_email(email: str):
 
     Async friendly.
     """
-    import hashlib
 
     url = "https://www.gravatar.com/avatar/{}.jpg?s=80&d=wavatar"
     return url.format(hashlib.md5(email.encode("utf-8").lower()).hexdigest())

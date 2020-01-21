@@ -229,11 +229,6 @@ UNITS = {"C": TEMP_CELSIUS, "F": TEMP_FAHRENHEIT}
 THREE_AXIS_NAMES = ["X Coordinate", "Y Coordinate", "Z Coordinate"]
 
 
-async def async_setup_platform(hass, config, async_add_entities, discovery_info=None):
-    """Platform uses config entry setup."""
-    pass
-
-
 async def async_setup_entry(hass, config_entry, async_add_entities):
     """Add binary sensors for a config entry."""
     broker = hass.data[DOMAIN][DATA_BROKERS][config_entry.entry_id]
@@ -283,12 +278,12 @@ class SmartThingsSensor(SmartThingsEntity):
     @property
     def name(self) -> str:
         """Return the name of the binary sensor."""
-        return "{} {}".format(self._device.label, self._name)
+        return f"{self._device.label} {self._name}"
 
     @property
     def unique_id(self) -> str:
         """Return a unique ID."""
-        return "{}.{}".format(self._device.device_id, self._attribute)
+        return f"{self._device.device_id}.{self._attribute}"
 
     @property
     def state(self):

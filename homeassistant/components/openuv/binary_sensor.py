@@ -23,11 +23,6 @@ ATTR_PROTECTION_WINDOW_STARTING_TIME = "start_time"
 ATTR_PROTECTION_WINDOW_STARTING_UV = "start_uv"
 
 
-async def async_setup_platform(hass, config, async_add_entities, discovery_info=None):
-    """Set up an OpenUV sensor based on existing config."""
-    pass
-
-
 async def async_setup_entry(hass, entry, async_add_entities):
     """Set up an OpenUV sensor based on a config entry."""
     openuv = hass.data[DOMAIN][DATA_OPENUV_CLIENT][entry.entry_id]
@@ -75,8 +70,8 @@ class OpenUvBinarySensor(OpenUvEntity, BinarySensorDevice):
 
     @property
     def unique_id(self) -> str:
-        """Return a unique, HASS-friendly identifier for this entity."""
-        return "{0}_{1}_{2}".format(self._latitude, self._longitude, self._sensor_type)
+        """Return a unique, Home Assistant friendly identifier for this entity."""
+        return f"{self._latitude}_{self._longitude}_{self._sensor_type}"
 
     async def async_added_to_hass(self):
         """Register callbacks."""
@@ -100,7 +95,15 @@ class OpenUvBinarySensor(OpenUvEntity, BinarySensorDevice):
         data = self.openuv.data[DATA_PROTECTION_WINDOW]
 
         if not data:
+            self._available = False
             return
+
+        self._available = True
+
+        for key in ("from_time", "to_time", "from_uv", "to_uv"):
+            if not data.get(key):
+                _LOGGER.info("Skipping update due to missing data: %s", key)
+                return
 
         if self._sensor_type == TYPE_PROTECTION_WINDOW:
             self._state = (

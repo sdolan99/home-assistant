@@ -9,10 +9,10 @@ from homeassistant.components.weather import (
     ATTR_FORECAST_TIME,
     WeatherEntity,
 )
-import homeassistant.util.dt as dt_util
 from homeassistant.const import TEMP_CELSIUS
+import homeassistant.util.dt as dt_util
 
-from . import ATTRIBUTION, CONDITION_CLASSES, CONF_CITY, DATA_METEO_FRANCE
+from .const import ATTRIBUTION, CONDITION_CLASSES, CONF_CITY, DATA_METEO_FRANCE
 
 _LOGGER = logging.getLogger(__name__)
 

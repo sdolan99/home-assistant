@@ -4,21 +4,16 @@ import logging
 from velbus.util import VelbusException
 
 from homeassistant.components.cover import (
-    CoverDevice,
     SUPPORT_CLOSE,
     SUPPORT_OPEN,
     SUPPORT_STOP,
+    CoverDevice,
 )
 
-from .const import DOMAIN
 from . import VelbusEntity
+from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
-
-
-async def async_setup_platform(hass, config, async_add_entities, discovery_info=None):
-    """Set up Velbus covers."""
-    pass
 
 
 async def async_setup_entry(hass, entry, async_add_entities):

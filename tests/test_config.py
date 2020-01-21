@@ -1,45 +1,39 @@
 """Test config utils."""
 # pylint: disable=protected-access
 import asyncio
+from collections import OrderedDict
 import copy
 import os
 import unittest.mock as mock
-from collections import OrderedDict
-from ipaddress import ip_network
 
 import asynctest
 import pytest
-from voluptuous import MultipleInvalid, Invalid
+from voluptuous import Invalid, MultipleInvalid
 import yaml
 
-from homeassistant.core import SOURCE_STORAGE, HomeAssistantError
 import homeassistant.config as config_util
-from homeassistant.loader import async_get_integration
 from homeassistant.const import (
+    ATTR_ASSUMED_STATE,
     ATTR_FRIENDLY_NAME,
     ATTR_HIDDEN,
-    ATTR_ASSUMED_STATE,
+    CONF_AUTH_MFA_MODULES,
+    CONF_AUTH_PROVIDERS,
+    CONF_CUSTOMIZE,
     CONF_LATITUDE,
     CONF_LONGITUDE,
-    CONF_UNIT_SYSTEM,
     CONF_NAME,
-    CONF_CUSTOMIZE,
-    __version__,
-    CONF_UNIT_SYSTEM_METRIC,
-    CONF_UNIT_SYSTEM_IMPERIAL,
     CONF_TEMPERATURE_UNIT,
-    CONF_AUTH_PROVIDERS,
-    CONF_AUTH_MFA_MODULES,
+    CONF_UNIT_SYSTEM,
+    CONF_UNIT_SYSTEM_IMPERIAL,
+    CONF_UNIT_SYSTEM_METRIC,
+    __version__,
 )
+from homeassistant.core import SOURCE_STORAGE, HomeAssistantError
+import homeassistant.helpers.check_config as check_config
+from homeassistant.helpers.entity import Entity
+from homeassistant.loader import async_get_integration
 from homeassistant.util import dt as dt_util
 from homeassistant.util.yaml import SECRET_YAML
-from homeassistant.helpers.entity import Entity
-from homeassistant.components.config.group import CONFIG_PATH as GROUP_CONFIG_PATH
-from homeassistant.components.config.automation import (
-    CONFIG_PATH as AUTOMATIONS_CONFIG_PATH,
-)
-from homeassistant.components.config.script import CONFIG_PATH as SCRIPTS_CONFIG_PATH
-import homeassistant.helpers.check_config as check_config
 
 from tests.common import get_test_config_dir, patch_yaml_files
 
@@ -47,9 +41,10 @@ CONFIG_DIR = get_test_config_dir()
 YAML_PATH = os.path.join(CONFIG_DIR, config_util.YAML_CONFIG_FILE)
 SECRET_PATH = os.path.join(CONFIG_DIR, SECRET_YAML)
 VERSION_PATH = os.path.join(CONFIG_DIR, config_util.VERSION_FILE)
-GROUP_PATH = os.path.join(CONFIG_DIR, GROUP_CONFIG_PATH)
-AUTOMATIONS_PATH = os.path.join(CONFIG_DIR, AUTOMATIONS_CONFIG_PATH)
-SCRIPTS_PATH = os.path.join(CONFIG_DIR, SCRIPTS_CONFIG_PATH)
+GROUP_PATH = os.path.join(CONFIG_DIR, config_util.GROUP_CONFIG_PATH)
+AUTOMATIONS_PATH = os.path.join(CONFIG_DIR, config_util.AUTOMATION_CONFIG_PATH)
+SCRIPTS_PATH = os.path.join(CONFIG_DIR, config_util.SCRIPT_CONFIG_PATH)
+SCENES_PATH = os.path.join(CONFIG_DIR, config_util.SCENE_CONFIG_PATH)
 ORIG_TIMEZONE = dt_util.DEFAULT_TIME_ZONE
 
 
@@ -81,10 +76,13 @@ def teardown():
     if os.path.isfile(SCRIPTS_PATH):
         os.remove(SCRIPTS_PATH)
 
+    if os.path.isfile(SCENES_PATH):
+        os.remove(SCENES_PATH)
+
 
 async def test_create_default_config(hass):
     """Test creation of default config."""
-    await config_util.async_create_default_config(hass, CONFIG_DIR)
+    await config_util.async_create_default_config(hass)
 
     assert os.path.isfile(YAML_PATH)
     assert os.path.isfile(SECRET_PATH)
@@ -93,20 +91,13 @@ async def test_create_default_config(hass):
     assert os.path.isfile(AUTOMATIONS_PATH)
 
 
-def test_find_config_file_yaml():
-    """Test if it finds a YAML config file."""
-    create_file(YAML_PATH)
-
-    assert YAML_PATH == config_util.find_config_file(CONFIG_DIR)
-
-
 async def test_ensure_config_exists_creates_config(hass):
     """Test that calling ensure_config_exists.
 
     If not creates a new config file.
     """
     with mock.patch("builtins.print") as mock_print:
-        await config_util.async_ensure_config_exists(hass, CONFIG_DIR)
+        await config_util.async_ensure_config_exists(hass)
 
     assert os.path.isfile(YAML_PATH)
     assert mock_print.called
@@ -115,7 +106,7 @@ async def test_ensure_config_exists_creates_config(hass):
 async def test_ensure_config_exists_uses_existing_config(hass):
     """Test that calling ensure_config_exists uses existing config."""
     create_file(YAML_PATH)
-    await config_util.async_ensure_config_exists(hass, CONFIG_DIR)
+    await config_util.async_ensure_config_exists(hass)
 
     with open(YAML_PATH) as f:
         content = f.read()
@@ -174,13 +165,9 @@ async def test_create_default_config_returns_none_if_write_error(hass):
 
     Non existing folder returns None.
     """
+    hass.config.config_dir = os.path.join(CONFIG_DIR, "non_existing_dir/")
     with mock.patch("builtins.print") as mock_print:
-        assert (
-            await config_util.async_create_default_config(
-                hass, os.path.join(CONFIG_DIR, "non_existing_dir/")
-            )
-            is None
-        )
+        assert await config_util.async_create_default_config(hass) is False
     assert mock_print.called
 
 
@@ -333,7 +320,6 @@ def test_config_upgrade_same_version(hass):
         assert opened_file.write.call_count == 0
 
 
-@mock.patch("homeassistant.config.find_config_file", mock.Mock())
 def test_config_upgrade_no_file(hass):
     """Test update of version on upgrade, with no version file."""
     mock_open = mock.mock_open()
@@ -344,62 +330,6 @@ def test_config_upgrade_no_file(hass):
         config_util.process_ha_config_upgrade(hass)
         assert opened_file.write.call_count == 1
         assert opened_file.write.call_args == mock.call(__version__)
-
-
-@mock.patch("homeassistant.config.shutil")
-@mock.patch("homeassistant.config.os")
-@mock.patch("homeassistant.config.find_config_file", mock.Mock())
-def test_migrate_file_on_upgrade(mock_os, mock_shutil, hass):
-    """Test migrate of config files on upgrade."""
-    ha_version = "0.7.0"
-
-    mock_os.path.isdir = mock.Mock(return_value=True)
-
-    mock_open = mock.mock_open()
-
-    def _mock_isfile(filename):
-        return True
-
-    with mock.patch("homeassistant.config.open", mock_open, create=True), mock.patch(
-        "homeassistant.config.os.path.isfile", _mock_isfile
-    ):
-        opened_file = mock_open.return_value
-        # pylint: disable=no-member
-        opened_file.readline.return_value = ha_version
-
-        hass.config.path = mock.Mock()
-
-        config_util.process_ha_config_upgrade(hass)
-
-    assert mock_os.rename.call_count == 1
-
-
-@mock.patch("homeassistant.config.shutil")
-@mock.patch("homeassistant.config.os")
-@mock.patch("homeassistant.config.find_config_file", mock.Mock())
-def test_migrate_no_file_on_upgrade(mock_os, mock_shutil, hass):
-    """Test not migrating config files on upgrade."""
-    ha_version = "0.7.0"
-
-    mock_os.path.isdir = mock.Mock(return_value=True)
-
-    mock_open = mock.mock_open()
-
-    def _mock_isfile(filename):
-        return False
-
-    with mock.patch("homeassistant.config.open", mock_open, create=True), mock.patch(
-        "homeassistant.config.os.path.isfile", _mock_isfile
-    ):
-        opened_file = mock_open.return_value
-        # pylint: disable=no-member
-        opened_file.readline.return_value = ha_version
-
-        hass.config.path = mock.Mock()
-
-        config_util.process_ha_config_upgrade(hass)
-
-    assert mock_os.rename.call_count == 0
 
 
 async def test_loading_configuration_from_storage(hass, hass_storage):
@@ -417,7 +347,7 @@ async def test_loading_configuration_from_storage(hass, hass_storage):
         "version": 1,
     }
     await config_util.async_process_ha_core_config(
-        hass, {"whitelist_external_dirs": "/tmp"}
+        hass, {"whitelist_external_dirs": "/etc"}
     )
 
     assert hass.config.latitude == 55
@@ -427,7 +357,7 @@ async def test_loading_configuration_from_storage(hass, hass_storage):
     assert hass.config.units.name == CONF_UNIT_SYSTEM_METRIC
     assert hass.config.time_zone.zone == "Europe/Copenhagen"
     assert len(hass.config.whitelist_external_dirs) == 2
-    assert "/tmp" in hass.config.whitelist_external_dirs
+    assert "/etc" in hass.config.whitelist_external_dirs
     assert hass.config.config_source == SOURCE_STORAGE
 
 
@@ -447,7 +377,7 @@ async def test_updating_configuration(hass, hass_storage):
     }
     hass_storage["core.config"] = dict(core_data)
     await config_util.async_process_ha_core_config(
-        hass, {"whitelist_external_dirs": "/tmp"}
+        hass, {"whitelist_external_dirs": "/etc"}
     )
     await hass.config.async_update(latitude=50)
 
@@ -472,7 +402,7 @@ async def test_override_stored_configuration(hass, hass_storage):
         "version": 1,
     }
     await config_util.async_process_ha_core_config(
-        hass, {"latitude": 60, "whitelist_external_dirs": "/tmp"}
+        hass, {"latitude": 60, "whitelist_external_dirs": "/etc"}
     )
 
     assert hass.config.latitude == 60
@@ -482,7 +412,7 @@ async def test_override_stored_configuration(hass, hass_storage):
     assert hass.config.units.name == CONF_UNIT_SYSTEM_METRIC
     assert hass.config.time_zone.zone == "Europe/Copenhagen"
     assert len(hass.config.whitelist_external_dirs) == 2
-    assert "/tmp" in hass.config.whitelist_external_dirs
+    assert "/etc" in hass.config.whitelist_external_dirs
     assert hass.config.config_source == config_util.SOURCE_YAML
 
 
@@ -497,7 +427,7 @@ async def test_loading_configuration(hass):
             "name": "Huis",
             CONF_UNIT_SYSTEM: CONF_UNIT_SYSTEM_IMPERIAL,
             "time_zone": "America/New_York",
-            "whitelist_external_dirs": "/tmp",
+            "whitelist_external_dirs": "/etc",
         },
     )
 
@@ -508,7 +438,7 @@ async def test_loading_configuration(hass):
     assert hass.config.units.name == CONF_UNIT_SYSTEM_IMPERIAL
     assert hass.config.time_zone.zone == "America/New_York"
     assert len(hass.config.whitelist_external_dirs) == 2
-    assert "/tmp" in hass.config.whitelist_external_dirs
+    assert "/etc" in hass.config.whitelist_external_dirs
     assert hass.config.config_source == config_util.SOURCE_YAML
 
 
@@ -790,9 +720,7 @@ async def test_merge_id_schema(hass):
         integration = await async_get_integration(hass, domain)
         module = integration.get_component()
         typ, _ = config_util._identify_config_schema(module)
-        assert typ == expected_type, "{} expected {}, got {}".format(
-            domain, expected_type, typ
-        )
+        assert typ == expected_type, f"{domain} expected {expected_type}, got {typ}"
 
 
 async def test_merge_duplicate_keys(merge_log_err, hass):
@@ -874,48 +802,6 @@ async def test_auth_provider_config_default(hass):
     assert hass.auth.auth_providers[0].type == "homeassistant"
     assert len(hass.auth.auth_mfa_modules) == 1
     assert hass.auth.auth_mfa_modules[0].id == "totp"
-
-
-async def test_auth_provider_config_default_api_password(hass):
-    """Test loading default auth provider config with api password."""
-    core_config = {
-        "latitude": 60,
-        "longitude": 50,
-        "elevation": 25,
-        "name": "Huis",
-        CONF_UNIT_SYSTEM: CONF_UNIT_SYSTEM_IMPERIAL,
-        "time_zone": "GMT",
-    }
-    if hasattr(hass, "auth"):
-        del hass.auth
-    await config_util.async_process_ha_core_config(hass, core_config, "pass")
-
-    assert len(hass.auth.auth_providers) == 2
-    assert hass.auth.auth_providers[0].type == "homeassistant"
-    assert hass.auth.auth_providers[1].type == "legacy_api_password"
-    assert hass.auth.auth_providers[1].api_password == "pass"
-
-
-async def test_auth_provider_config_default_trusted_networks(hass):
-    """Test loading default auth provider config with trusted networks."""
-    core_config = {
-        "latitude": 60,
-        "longitude": 50,
-        "elevation": 25,
-        "name": "Huis",
-        CONF_UNIT_SYSTEM: CONF_UNIT_SYSTEM_IMPERIAL,
-        "time_zone": "GMT",
-    }
-    if hasattr(hass, "auth"):
-        del hass.auth
-    await config_util.async_process_ha_core_config(
-        hass, core_config, trusted_networks=["192.168.0.1"]
-    )
-
-    assert len(hass.auth.auth_providers) == 2
-    assert hass.auth.auth_providers[0].type == "homeassistant"
-    assert hass.auth.auth_providers[1].type == "trusted_networks"
-    assert hass.auth.auth_providers[1].trusted_networks[0] == ip_network("192.168.0.1")
 
 
 async def test_disallowed_auth_provider_config(hass):

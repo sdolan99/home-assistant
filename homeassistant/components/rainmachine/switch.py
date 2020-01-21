@@ -2,6 +2,8 @@
 from datetime import datetime
 import logging
 
+from regenmaschine.errors import RequestError
+
 from homeassistant.components.switch import SwitchDevice
 from homeassistant.const import ATTR_ID
 from homeassistant.core import callback
@@ -93,11 +95,6 @@ VEGETATION_MAP = {
 }
 
 
-async def async_setup_platform(hass, config, async_add_entities, discovery_info=None):
-    """Set up RainMachine switches sensor based on the old way."""
-    pass
-
-
 async def async_setup_entry(hass, entry, async_add_entities):
     """Set up RainMachine switches based on a config entry."""
     rainmachine = hass.data[RAINMACHINE_DOMAIN][DATA_CLIENT][entry.entry_id]
@@ -141,7 +138,7 @@ class RainMachineSwitch(RainMachineEntity, SwitchDevice):
 
     @property
     def unique_id(self) -> str:
-        """Return a unique, HASS-friendly identifier for this entity."""
+        """Return a unique, Home Assistant friendly identifier for this entity."""
         return "{0}_{1}_{2}".format(
             self.rainmachine.device_mac.replace(":", ""),
             self._switch_type,
@@ -181,7 +178,6 @@ class RainMachineProgram(RainMachineSwitch):
 
     async def async_turn_off(self, **kwargs) -> None:
         """Turn the program off."""
-        from regenmaschine.errors import RequestError
 
         try:
             await self.rainmachine.client.programs.stop(self._rainmachine_entity_id)
@@ -193,7 +189,6 @@ class RainMachineProgram(RainMachineSwitch):
 
     async def async_turn_on(self, **kwargs) -> None:
         """Turn the program on."""
-        from regenmaschine.errors import RequestError
 
         try:
             await self.rainmachine.client.programs.start(self._rainmachine_entity_id)
@@ -205,7 +200,6 @@ class RainMachineProgram(RainMachineSwitch):
 
     async def async_update(self) -> None:
         """Update info for the program."""
-        from regenmaschine.errors import RequestError
 
         try:
             self._obj = await self.rainmachine.client.programs.get(
@@ -265,7 +259,6 @@ class RainMachineZone(RainMachineSwitch):
 
     async def async_turn_off(self, **kwargs) -> None:
         """Turn the zone off."""
-        from regenmaschine.errors import RequestError
 
         try:
             await self.rainmachine.client.zones.stop(self._rainmachine_entity_id)
@@ -274,7 +267,6 @@ class RainMachineZone(RainMachineSwitch):
 
     async def async_turn_on(self, **kwargs) -> None:
         """Turn the zone on."""
-        from regenmaschine.errors import RequestError
 
         try:
             await self.rainmachine.client.zones.start(
@@ -285,7 +277,6 @@ class RainMachineZone(RainMachineSwitch):
 
     async def async_update(self) -> None:
         """Update info for the zone."""
-        from regenmaschine.errors import RequestError
 
         try:
             self._obj = await self.rainmachine.client.zones.get(

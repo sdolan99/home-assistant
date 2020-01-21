@@ -1,7 +1,7 @@
 """Provide animated GIF loops of Buienradar imagery."""
 import asyncio
-import logging
 from datetime import datetime, timedelta
+import logging
 from typing import Optional
 
 import aiohttp
@@ -9,17 +9,14 @@ import voluptuous as vol
 
 from homeassistant.components.camera import PLATFORM_SCHEMA, Camera
 from homeassistant.const import CONF_NAME
-
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-
 from homeassistant.util import dt as dt_util
-
 
 CONF_DIMENSION = "dimension"
 CONF_DELTA = "delta"
 
-RADAR_MAP_URL_TEMPLATE = "https://api.buienradar.nl/image/1.0/" "RadarMapNL?w={w}&h={h}"
+RADAR_MAP_URL_TEMPLATE = "https://api.buienradar.nl/image/1.0/RadarMapNL?w={w}&h={h}"
 
 _LOG = logging.getLogger(__name__)
 
@@ -81,13 +78,13 @@ class BuienradarCam(Camera):
         # invariant: this condition is private to and owned by this instance.
         self._condition = asyncio.Condition()
 
-        self._last_image = None  # type: Optional[bytes]
+        self._last_image: Optional[bytes] = None
         # value of the last seen last modified header
-        self._last_modified = None  # type: Optional[str]
+        self._last_modified: Optional[str] = None
         # loading status
         self._loading = False
         # deadline for image refresh - self.delta after last successful load
-        self._deadline = None  # type: Optional[datetime]
+        self._deadline: Optional[datetime] = None
 
     @property
     def name(self) -> str:
@@ -137,7 +134,7 @@ class BuienradarCam(Camera):
 
         Uses ayncio conditions to make sure only one task enters the critical
         section at the same time. Otherwise, two http requests would start
-        when two tabs with home assistant are open.
+        when two tabs with Home Assistant are open.
 
         The condition is entered in two sections because otherwise the lock
         would be held while doing the http request.

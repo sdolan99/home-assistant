@@ -14,22 +14,21 @@ import socket
 import aiohttp
 import voluptuous as vol
 
-from homeassistant.components.media_player import MediaPlayerDevice, PLATFORM_SCHEMA
+from homeassistant.components.media_player import PLATFORM_SCHEMA, MediaPlayerDevice
 from homeassistant.components.media_player.const import (
     MEDIA_TYPE_MUSIC,
     SUPPORT_CLEAR_PLAYLIST,
     SUPPORT_NEXT_TRACK,
     SUPPORT_PAUSE,
     SUPPORT_PLAY,
-    SUPPORT_PLAY_MEDIA,
     SUPPORT_PREVIOUS_TRACK,
     SUPPORT_SEEK,
     SUPPORT_SELECT_SOURCE,
+    SUPPORT_SHUFFLE_SET,
     SUPPORT_STOP,
     SUPPORT_VOLUME_MUTE,
     SUPPORT_VOLUME_SET,
     SUPPORT_VOLUME_STEP,
-    SUPPORT_SHUFFLE_SET,
 )
 from homeassistant.const import (
     CONF_HOST,
@@ -61,7 +60,6 @@ SUPPORT_VOLUMIO = (
     | SUPPORT_PREVIOUS_TRACK
     | SUPPORT_NEXT_TRACK
     | SUPPORT_SEEK
-    | SUPPORT_PLAY_MEDIA
     | SUPPORT_STOP
     | SUPPORT_PLAY
     | SUPPORT_VOLUME_STEP
@@ -125,7 +123,7 @@ class Volumio(MediaPlayerDevice):
 
     async def send_volumio_msg(self, method, params=None):
         """Send message."""
-        url = "http://{}:{}/api/v1/{}/".format(self.host, self.port, method)
+        url = f"http://{self.host}:{self.port}/api/v1/{method}/"
 
         _LOGGER.debug("URL: %s params: %s", url, params)
 
@@ -202,7 +200,7 @@ class Volumio(MediaPlayerDevice):
         if str(url[0:2]).lower() == "ht":
             mediaurl = url
         else:
-            mediaurl = "http://{}:{}{}".format(self.host, self.port, url)
+            mediaurl = f"http://{self.host}:{self.port}{url}"
         return mediaurl
 
     @property
@@ -306,7 +304,7 @@ class Volumio(MediaPlayerDevice):
     def async_set_shuffle(self, shuffle):
         """Enable/disable shuffle mode."""
         return self.send_volumio_msg(
-            "commands", params={"cmd": "random", "value": str(shuffle)}
+            "commands", params={"cmd": "random", "value": str(shuffle).lower()}
         )
 
     def async_select_source(self, source):

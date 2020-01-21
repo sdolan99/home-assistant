@@ -80,11 +80,6 @@ UNIT_MAP = {"C": TEMP_CELSIUS, "F": TEMP_FAHRENHEIT}
 _LOGGER = logging.getLogger(__name__)
 
 
-async def async_setup_platform(hass, config, async_add_entities, discovery_info=None):
-    """Platform uses config entry setup."""
-    pass
-
-
 async def async_setup_entry(hass, config_entry, async_add_entities):
     """Add climate entities for a config entry."""
     ac_capabilities = [
@@ -406,7 +401,7 @@ class SmartThingsAirConditioner(SmartThingsEntity, ClimateDevice):
                 modes.add(state)
             else:
                 _LOGGER.debug(
-                    "Device %s (%s) returned an invalid supported " "AC mode: %s",
+                    "Device %s (%s) returned an invalid supported AC mode: %s",
                     self._device.label,
                     self._device.device_id,
                     mode,
