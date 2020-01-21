@@ -1,10 +1,12 @@
 """Support for Etekcity VeSync switches."""
 import logging
-from homeassistant.core import callback
+
 from homeassistant.components.switch import SwitchDevice
+from homeassistant.core import callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
-from .const import VS_DISCOVERY, VS_DISPATCHERS, VS_SWITCHES, DOMAIN
+
 from .common import VeSyncDevice
+from .const import DOMAIN, VS_DISCOVERY, VS_DISPATCHERS, VS_SWITCHES
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -46,7 +48,7 @@ def _async_setup_entities(devices, async_add_entities):
             dev_list.append(VeSyncLightSwitch(dev))
         else:
             _LOGGER.warning(
-                "%s - Unkown device type - %s", dev.device_name, dev.device_type
+                "%s - Unknown device type - %s", dev.device_name, dev.device_type
             )
             continue
 

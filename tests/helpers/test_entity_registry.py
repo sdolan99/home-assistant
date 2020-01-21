@@ -5,11 +5,11 @@ from unittest.mock import patch
 import asynctest
 import pytest
 
-from homeassistant.core import valid_entity_id, callback
+from homeassistant.const import EVENT_HOMEASSISTANT_START, STATE_UNAVAILABLE
+from homeassistant.core import CoreState, callback, valid_entity_id
 from homeassistant.helpers import entity_registry
 
-from tests.common import mock_registry, flush_store
-
+from tests.common import MockConfigEntry, flush_store, mock_registry
 
 YAML__OPEN_PATH = "homeassistant.util.yaml.loader.open"
 
@@ -58,6 +58,52 @@ def test_get_or_create_suggested_object_id(registry):
     assert entry.entity_id == "light.beer"
 
 
+def test_get_or_create_updates_data(registry):
+    """Test that we update data in get_or_create."""
+    orig_config_entry = MockConfigEntry(domain="light")
+
+    orig_entry = registry.async_get_or_create(
+        "light",
+        "hue",
+        "5678",
+        config_entry=orig_config_entry,
+        device_id="mock-dev-id",
+        capabilities={"max": 100},
+        supported_features=5,
+        device_class="mock-device-class",
+        disabled_by=entity_registry.DISABLED_HASS,
+    )
+
+    assert orig_entry.config_entry_id == orig_config_entry.entry_id
+    assert orig_entry.device_id == "mock-dev-id"
+    assert orig_entry.capabilities == {"max": 100}
+    assert orig_entry.supported_features == 5
+    assert orig_entry.device_class == "mock-device-class"
+    assert orig_entry.disabled_by == entity_registry.DISABLED_HASS
+
+    new_config_entry = MockConfigEntry(domain="light")
+
+    new_entry = registry.async_get_or_create(
+        "light",
+        "hue",
+        "5678",
+        config_entry=new_config_entry,
+        device_id="new-mock-dev-id",
+        capabilities={"new-max": 100},
+        supported_features=10,
+        device_class="new-mock-device-class",
+        disabled_by=entity_registry.DISABLED_USER,
+    )
+
+    assert new_entry.config_entry_id == new_config_entry.entry_id
+    assert new_entry.device_id == "new-mock-dev-id"
+    assert new_entry.capabilities == {"new-max": 100}
+    assert new_entry.supported_features == 10
+    assert new_entry.device_class == "new-mock-device-class"
+    # Should not be updated
+    assert new_entry.disabled_by == entity_registry.DISABLED_HASS
+
+
 def test_get_or_create_suggested_object_id_conflict_register(registry):
     """Test that we don't generate an entity id that is already registered."""
     entry = registry.async_get_or_create(
@@ -88,9 +134,19 @@ def test_create_triggers_save(hass, registry):
 
 async def test_loading_saving_data(hass, registry):
     """Test that we load/save data correctly."""
+    mock_config = MockConfigEntry(domain="light")
+
     orig_entry1 = registry.async_get_or_create("light", "hue", "1234")
     orig_entry2 = registry.async_get_or_create(
-        "light", "hue", "5678", config_entry_id="mock-id"
+        "light",
+        "hue",
+        "5678",
+        device_id="mock-dev-id",
+        config_entry=mock_config,
+        capabilities={"max": 100},
+        supported_features=5,
+        device_class="mock-device-class",
+        disabled_by=entity_registry.DISABLED_HASS,
     )
 
     assert len(registry.entities) == 2
@@ -103,12 +159,16 @@ async def test_loading_saving_data(hass, registry):
     # Ensure same order
     assert list(registry.entities) == list(registry2.entities)
     new_entry1 = registry.async_get_or_create("light", "hue", "1234")
-    new_entry2 = registry.async_get_or_create(
-        "light", "hue", "5678", config_entry_id="mock-id"
-    )
+    new_entry2 = registry.async_get_or_create("light", "hue", "5678")
 
     assert orig_entry1 == new_entry1
     assert orig_entry2 == new_entry2
+
+    assert new_entry2.device_id == "mock-dev-id"
+    assert new_entry2.disabled_by == entity_registry.DISABLED_HASS
+    assert new_entry2.capabilities == {"max": 100}
+    assert new_entry2.supported_features == 5
+    assert new_entry2.device_class == "mock-device-class"
 
 
 def test_generate_entity_considers_registered_entities(registry):
@@ -198,11 +258,14 @@ def test_async_get_entity_id(registry):
 
 async def test_updating_config_entry_id(hass, registry, update_events):
     """Test that we update config entry id in registry."""
+    mock_config_1 = MockConfigEntry(domain="light", entry_id="mock-id-1")
     entry = registry.async_get_or_create(
-        "light", "hue", "5678", config_entry_id="mock-id-1"
+        "light", "hue", "5678", config_entry=mock_config_1
     )
+
+    mock_config_2 = MockConfigEntry(domain="light", entry_id="mock-id-2")
     entry2 = registry.async_get_or_create(
-        "light", "hue", "5678", config_entry_id="mock-id-2"
+        "light", "hue", "5678", config_entry=mock_config_2
     )
     assert entry.entity_id == entry2.entity_id
     assert entry2.config_entry_id == "mock-id-2"
@@ -214,12 +277,15 @@ async def test_updating_config_entry_id(hass, registry, update_events):
     assert update_events[0]["entity_id"] == entry.entity_id
     assert update_events[1]["action"] == "update"
     assert update_events[1]["entity_id"] == entry.entity_id
+    assert update_events[1]["changes"] == ["config_entry_id"]
 
 
 async def test_removing_config_entry_id(hass, registry, update_events):
     """Test that we update config entry id in registry."""
+    mock_config = MockConfigEntry(domain="light", entry_id="mock-id-1")
+
     entry = registry.async_get_or_create(
-        "light", "hue", "5678", config_entry_id="mock-id-1"
+        "light", "hue", "5678", config_entry=mock_config
     )
     assert entry.config_entry_id == "mock-id-1"
     registry.async_clear_config_entry("mock-id-1")
@@ -237,6 +303,8 @@ async def test_removing_config_entry_id(hass, registry, update_events):
 
 async def test_migration(hass):
     """Test migration from old data to new."""
+    mock_config = MockConfigEntry(domain="test-platform", entry_id="test-config-id")
+
     old_conf = {
         "light.kitchen": {
             "config_entry_id": "test-config-id",
@@ -256,7 +324,7 @@ async def test_migration(hass):
         domain="light",
         platform="test-platform",
         unique_id="test-unique",
-        config_entry_id="test-config-id",
+        config_entry=mock_config,
     )
     assert entry.name == "Test Name"
     assert entry.disabled_by == "hass"
@@ -326,8 +394,10 @@ async def test_loading_race_condition(hass):
 
 async def test_update_entity_unique_id(registry):
     """Test entity's unique_id is updated."""
+    mock_config = MockConfigEntry(domain="light", entry_id="mock-id-1")
+
     entry = registry.async_get_or_create(
-        "light", "hue", "5678", config_entry_id="mock-id-1"
+        "light", "hue", "5678", config_entry=mock_config
     )
     new_unique_id = "1234"
     with patch.object(registry, "async_schedule_save") as mock_schedule_save:
@@ -341,14 +411,127 @@ async def test_update_entity_unique_id(registry):
 
 async def test_update_entity_unique_id_conflict(registry):
     """Test migration raises when unique_id already in use."""
+    mock_config = MockConfigEntry(domain="light", entry_id="mock-id-1")
     entry = registry.async_get_or_create(
-        "light", "hue", "5678", config_entry_id="mock-id-1"
+        "light", "hue", "5678", config_entry=mock_config
     )
     entry2 = registry.async_get_or_create(
-        "light", "hue", "1234", config_entry_id="mock-id-1"
+        "light", "hue", "1234", config_entry=mock_config
     )
     with patch.object(
         registry, "async_schedule_save"
     ) as mock_schedule_save, pytest.raises(ValueError):
         registry.async_update_entity(entry.entity_id, new_unique_id=entry2.unique_id)
     assert mock_schedule_save.call_count == 0
+
+
+async def test_update_entity(registry):
+    """Test updating entity."""
+    mock_config = MockConfigEntry(domain="light", entry_id="mock-id-1")
+    entry = registry.async_get_or_create(
+        "light", "hue", "5678", config_entry=mock_config
+    )
+
+    for attr_name, new_value in (
+        ("name", "new name"),
+        ("disabled_by", entity_registry.DISABLED_USER),
+    ):
+        changes = {attr_name: new_value}
+        updated_entry = registry.async_update_entity(entry.entity_id, **changes)
+
+        assert updated_entry != entry
+        assert getattr(updated_entry, attr_name) == new_value
+        assert getattr(updated_entry, attr_name) != getattr(entry, attr_name)
+
+        entry = updated_entry
+
+
+async def test_disabled_by(registry):
+    """Test that we can disable an entry when we create it."""
+    entry = registry.async_get_or_create("light", "hue", "5678", disabled_by="hass")
+    assert entry.disabled_by == "hass"
+
+    entry = registry.async_get_or_create(
+        "light", "hue", "5678", disabled_by="integration"
+    )
+    assert entry.disabled_by == "hass"
+
+    entry2 = registry.async_get_or_create("light", "hue", "1234")
+    assert entry2.disabled_by is None
+
+
+async def test_disabled_by_system_options(registry):
+    """Test system options setting disabled_by."""
+    mock_config = MockConfigEntry(
+        domain="light",
+        entry_id="mock-id-1",
+        system_options={"disable_new_entities": True},
+    )
+    entry = registry.async_get_or_create(
+        "light", "hue", "AAAA", config_entry=mock_config
+    )
+    assert entry.disabled_by == "integration"
+
+    entry2 = registry.async_get_or_create(
+        "light", "hue", "BBBB", config_entry=mock_config, disabled_by="user"
+    )
+    assert entry2.disabled_by == "user"
+
+
+async def test_restore_states(hass):
+    """Test restoring states."""
+    hass.state = CoreState.not_running
+
+    registry = await entity_registry.async_get_registry(hass)
+
+    registry.async_get_or_create(
+        "light", "hue", "1234", suggested_object_id="simple",
+    )
+    # Should not be created
+    registry.async_get_or_create(
+        "light",
+        "hue",
+        "5678",
+        suggested_object_id="disabled",
+        disabled_by=entity_registry.DISABLED_HASS,
+    )
+    registry.async_get_or_create(
+        "light",
+        "hue",
+        "9012",
+        suggested_object_id="all_info_set",
+        capabilities={"max": 100},
+        supported_features=5,
+        device_class="mock-device-class",
+    )
+
+    hass.bus.async_fire(EVENT_HOMEASSISTANT_START, {})
+    await hass.async_block_till_done()
+
+    simple = hass.states.get("light.simple")
+    assert simple is not None
+    assert simple.state == STATE_UNAVAILABLE
+    assert simple.attributes == {"restored": True, "supported_features": 0}
+
+    disabled = hass.states.get("light.disabled")
+    assert disabled is None
+
+    all_info_set = hass.states.get("light.all_info_set")
+    assert all_info_set is not None
+    assert all_info_set.state == STATE_UNAVAILABLE
+    assert all_info_set.attributes == {
+        "max": 100,
+        "supported_features": 5,
+        "device_class": "mock-device-class",
+        "restored": True,
+    }
+
+    registry.async_remove("light.disabled")
+    registry.async_remove("light.simple")
+    registry.async_remove("light.all_info_set")
+
+    await hass.async_block_till_done()
+
+    assert hass.states.get("light.simple") is None
+    assert hass.states.get("light.disabled") is None
+    assert hass.states.get("light.all_info_set") is None

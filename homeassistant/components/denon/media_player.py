@@ -4,7 +4,7 @@ import telnetlib
 
 import voluptuous as vol
 
-from homeassistant.components.media_player import MediaPlayerDevice, PLATFORM_SCHEMA
+from homeassistant.components.media_player import PLATFORM_SCHEMA, MediaPlayerDevice
 from homeassistant.components.media_player.const import (
     SUPPORT_NEXT_TRACK,
     SUPPORT_PAUSE,
@@ -51,7 +51,7 @@ NORMAL_INPUTS = {
     "Dvd": "DVD",
     "Blue ray": "BD",
     "TV": "TV",
-    "Satelite / Cable": "SAT/CBL",
+    "Satellite / Cable": "SAT/CBL",
     "Game": "GAME",
     "Game2": "GAME2",
     "Video Aux": "V.AUX",

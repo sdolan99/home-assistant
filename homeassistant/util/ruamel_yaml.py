@@ -1,18 +1,18 @@
 """ruamel.yaml utility functions."""
+from collections import OrderedDict
 import logging
 import os
 from os import O_CREAT, O_TRUNC, O_WRONLY, stat_result
-from collections import OrderedDict
-from typing import Union, List, Dict, Optional
+from typing import Dict, List, Optional, Union
 
 import ruamel.yaml
 from ruamel.yaml import YAML
+from ruamel.yaml.compat import StringIO
 from ruamel.yaml.constructor import SafeConstructor
 from ruamel.yaml.error import YAMLError
-from ruamel.yaml.compat import StringIO
 
-from homeassistant.util.yaml import secret_yaml
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.util.yaml import secret_yaml
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -22,7 +22,7 @@ JSON_TYPE = Union[List, Dict, str]  # pylint: disable=invalid-name
 class ExtSafeConstructor(SafeConstructor):
     """Extended SafeConstructor."""
 
-    name = None  # type: Optional[str]
+    name: Optional[str] = None
 
 
 class UnsupportedYamlError(HomeAssistantError):
@@ -40,6 +40,7 @@ def _include_yaml(
 
     Example:
         device_tracker: !include device_tracker.yaml
+
     """
     if constructor.name is None:
         raise HomeAssistantError(
@@ -66,7 +67,7 @@ def object_to_yaml(data: JSON_TYPE) -> str:
     stream = StringIO()
     try:
         yaml.dump(data, stream)
-        result = stream.getvalue()  # type: str
+        result: str = stream.getvalue()
         return result
     except YAMLError as exc:
         _LOGGER.error("YAML error: %s", exc)
@@ -77,7 +78,7 @@ def yaml_to_object(data: str) -> JSON_TYPE:
     """Create object from yaml string."""
     yaml = YAML(typ="rt")
     try:
-        result = yaml.load(data)  # type: Union[List, Dict, str]
+        result: Union[List, Dict, str] = yaml.load(data)
         return result
     except YAMLError as exc:
         _LOGGER.error("YAML error: %s", exc)
@@ -88,7 +89,8 @@ def load_yaml(fname: str, round_trip: bool = False) -> JSON_TYPE:
     """Load a YAML file."""
     if round_trip:
         yaml = YAML(typ="rt")
-        yaml.preserve_quotes = True
+        # type ignore: https://bitbucket.org/ruamel/yaml/pull-requests/42
+        yaml.preserve_quotes = True  # type: ignore
     else:
         if ExtSafeConstructor.name is None:
             ExtSafeConstructor.name = fname
@@ -112,7 +114,7 @@ def save_yaml(fname: str, data: JSON_TYPE) -> None:
     """Save a YAML file."""
     yaml = YAML(typ="rt")
     yaml.indent(sequence=4, offset=2)
-    tmp_fname = fname + "__TEMP__"
+    tmp_fname = f"{fname}__TEMP__"
     try:
         try:
             file_stat = os.stat(fname)

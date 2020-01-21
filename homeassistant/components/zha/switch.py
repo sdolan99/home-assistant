@@ -1,21 +1,26 @@
 """Switches on Zigbee Home Automation networks."""
+import functools
 import logging
 
 from zigpy.zcl.foundation import Status
+
 from homeassistant.components.switch import DOMAIN, SwitchDevice
 from homeassistant.const import STATE_ON
 from homeassistant.core import callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
+
 from .core.const import (
+    CHANNEL_ON_OFF,
     DATA_ZHA,
     DATA_ZHA_DISPATCHERS,
-    ZHA_DISCOVERY_NEW,
-    ON_OFF_CHANNEL,
     SIGNAL_ATTR_UPDATED,
+    ZHA_DISCOVERY_NEW,
 )
+from .core.registries import ZHA_ENTITIES
 from .entity import ZhaEntity
 
 _LOGGER = logging.getLogger(__name__)
+STRICT_MATCH = functools.partial(ZHA_ENTITIES.strict_match, DOMAIN)
 
 
 async def async_setup_platform(hass, config, async_add_entities, discovery_info=None):
@@ -50,20 +55,25 @@ async def _async_setup_entities(
     """Set up the ZHA switches."""
     entities = []
     for discovery_info in discovery_infos:
-        entities.append(Switch(**discovery_info))
+        zha_dev = discovery_info["zha_device"]
+        channels = discovery_info["channels"]
 
-    async_add_entities(entities, update_before_add=True)
+        entity = ZHA_ENTITIES.get_entity(DOMAIN, zha_dev, channels, Switch)
+        if entity:
+            entities.append(entity(**discovery_info))
+
+    if entities:
+        async_add_entities(entities, update_before_add=True)
 
 
+@STRICT_MATCH(channel_names=CHANNEL_ON_OFF)
 class Switch(ZhaEntity, SwitchDevice):
     """ZHA switch."""
-
-    _domain = DOMAIN
 
     def __init__(self, **kwargs):
         """Initialize the ZHA switch."""
         super().__init__(**kwargs)
-        self._on_off_channel = self.cluster_channels.get(ON_OFF_CHANNEL)
+        self._on_off_channel = self.cluster_channels.get(CHANNEL_ON_OFF)
 
     @property
     def is_on(self) -> bool:

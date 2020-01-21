@@ -1,15 +1,16 @@
 """Support for FRITZ!Box routers."""
 import logging
 
+from fritzconnection import FritzHosts  # pylint: disable=import-error
 import voluptuous as vol
 
-import homeassistant.helpers.config_validation as cv
 from homeassistant.components.device_tracker import (
     DOMAIN,
     PLATFORM_SCHEMA,
     DeviceScanner,
 )
 from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_USERNAME
+import homeassistant.helpers.config_validation as cv
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -41,11 +42,9 @@ class FritzBoxScanner(DeviceScanner):
         self.password = config[CONF_PASSWORD]
         self.success_init = True
 
-        import fritzconnection as fc  # pylint: disable=import-error
-
         # Establish a connection to the FRITZ!Box.
         try:
-            self.fritz_box = fc.FritzHosts(
+            self.fritz_box = FritzHosts(
                 address=self.host, user=self.username, password=self.password
             )
         except (ValueError, TypeError):
@@ -61,7 +60,7 @@ class FritzBoxScanner(DeviceScanner):
             self._update_info()
         else:
             _LOGGER.error(
-                "Failed to establish connection to FRITZ!Box " "with IP: %s", self.host
+                "Failed to establish connection to FRITZ!Box with IP: %s", self.host
             )
 
     def scan_devices(self):
@@ -80,11 +79,19 @@ class FritzBoxScanner(DeviceScanner):
             return None
         return ret
 
+    def get_extra_attributes(self, device):
+        """Return the attributes (ip, mac) of the given device or None if is not known."""
+        ip_device = self.fritz_box.get_specific_host_entry(device).get("NewIPAddress")
+
+        if not ip_device:
+            return {}
+        return {"ip": ip_device, "mac": device}
+
     def _update_info(self):
         """Retrieve latest information from the FRITZ!Box."""
         if not self.success_init:
             return False
 
-        _LOGGER.info("Scanning")
+        _LOGGER.debug("Scanning")
         self.last_results = self.fritz_box.get_hosts_info()
         return True

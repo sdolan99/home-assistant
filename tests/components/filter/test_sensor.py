@@ -6,17 +6,18 @@ from unittest.mock import patch
 from homeassistant.components.filter.sensor import (
     LowPassFilter,
     OutlierFilter,
+    RangeFilter,
     ThrottleFilter,
     TimeSMAFilter,
-    RangeFilter,
     TimeThrottleFilter,
 )
-import homeassistant.util.dt as dt_util
-from homeassistant.setup import setup_component
 import homeassistant.core as ha
+from homeassistant.setup import setup_component
+import homeassistant.util.dt as dt_util
+
 from tests.common import (
-    get_test_home_assistant,
     assert_setup_component,
+    get_test_home_assistant,
     init_recorder_component,
 )
 
@@ -27,6 +28,7 @@ class TestFilterSensor(unittest.TestCase):
     def setup_method(self, method):
         """Set up things to be run when tests are started."""
         self.hass = get_test_home_assistant()
+        self.hass.config.components.add("history")
         raw_values = [20, 19, 18, 21, 22, 0]
         self.values = []
 
@@ -60,6 +62,31 @@ class TestFilterSensor(unittest.TestCase):
 
     def test_chain(self):
         """Test if filter chaining works."""
+        config = {
+            "sensor": {
+                "platform": "filter",
+                "name": "test",
+                "entity_id": "sensor.test_monitored",
+                "filters": [
+                    {"filter": "outlier", "window_size": 10, "radius": 4.0},
+                    {"filter": "lowpass", "time_constant": 10, "precision": 2},
+                    {"filter": "throttle", "window_size": 1},
+                ],
+            }
+        }
+
+        with assert_setup_component(1, "sensor"):
+            assert setup_component(self.hass, "sensor", config)
+
+            for value in self.values:
+                self.hass.states.set(config["sensor"]["entity_id"], value.state)
+                self.hass.block_till_done()
+
+            state = self.hass.states.get("sensor.test")
+            assert "18.05" == state.state
+
+    def test_chain_history(self, missing=False):
+        """Test if filter chaining works."""
         self.init_recorder()
         config = {
             "history": {},
@@ -78,20 +105,23 @@ class TestFilterSensor(unittest.TestCase):
         t_1 = dt_util.utcnow() - timedelta(minutes=2)
         t_2 = dt_util.utcnow() - timedelta(minutes=3)
 
-        fake_states = {
-            "sensor.test_monitored": [
-                ha.State("sensor.test_monitored", 18.0, last_changed=t_0),
-                ha.State("sensor.test_monitored", 19.0, last_changed=t_1),
-                ha.State("sensor.test_monitored", 18.2, last_changed=t_2),
-            ]
-        }
+        if missing:
+            fake_states = {}
+        else:
+            fake_states = {
+                "sensor.test_monitored": [
+                    ha.State("sensor.test_monitored", 18.0, last_changed=t_0),
+                    ha.State("sensor.test_monitored", 19.0, last_changed=t_1),
+                    ha.State("sensor.test_monitored", 18.2, last_changed=t_2),
+                ]
+            }
 
         with patch(
-            "homeassistant.components.history." "state_changes_during_period",
+            "homeassistant.components.history.state_changes_during_period",
             return_value=fake_states,
         ):
             with patch(
-                "homeassistant.components.history." "get_last_state_changes",
+                "homeassistant.components.history.get_last_state_changes",
                 return_value=fake_states,
             ):
                 with assert_setup_component(1, "sensor"):
@@ -102,7 +132,52 @@ class TestFilterSensor(unittest.TestCase):
                     self.hass.block_till_done()
 
                 state = self.hass.states.get("sensor.test")
-                assert "17.05" == state.state
+                if missing:
+                    assert "18.05" == state.state
+                else:
+                    assert "17.05" == state.state
+
+    def test_chain_history_missing(self):
+        """Test if filter chaining works when recorder is enabled but the source is not recorded."""
+        return self.test_chain_history(missing=True)
+
+    def test_history_time(self):
+        """Test loading from history based on a time window."""
+        self.init_recorder()
+        config = {
+            "history": {},
+            "sensor": {
+                "platform": "filter",
+                "name": "test",
+                "entity_id": "sensor.test_monitored",
+                "filters": [{"filter": "time_throttle", "window_size": "00:01"}],
+            },
+        }
+        t_0 = dt_util.utcnow() - timedelta(minutes=1)
+        t_1 = dt_util.utcnow() - timedelta(minutes=2)
+        t_2 = dt_util.utcnow() - timedelta(minutes=3)
+
+        fake_states = {
+            "sensor.test_monitored": [
+                ha.State("sensor.test_monitored", 18.0, last_changed=t_0),
+                ha.State("sensor.test_monitored", 19.0, last_changed=t_1),
+                ha.State("sensor.test_monitored", 18.2, last_changed=t_2),
+            ]
+        }
+        with patch(
+            "homeassistant.components.history.state_changes_during_period",
+            return_value=fake_states,
+        ):
+            with patch(
+                "homeassistant.components.history.get_last_state_changes",
+                return_value=fake_states,
+            ):
+                with assert_setup_component(1, "sensor"):
+                    assert setup_component(self.hass, "sensor", config)
+
+                self.hass.block_till_done()
+                state = self.hass.states.get("sensor.test")
+                assert "18.0" == state.state
 
     def test_outlier(self):
         """Test if outlier filter works."""
@@ -133,6 +208,13 @@ class TestFilterSensor(unittest.TestCase):
             filtered = filt.filter_state(state)
         assert 21 == filtered.state
 
+    def test_precision_zero(self):
+        """Test if precision of zero returns an integer."""
+        filt = LowPassFilter(window_size=10, precision=0, entity=None, time_constant=10)
+        for state in self.values:
+            filtered = filt.filter_state(state)
+        assert isinstance(filtered.state, int)
+
     def test_lowpass(self):
         """Test if lowpass filter works."""
         filt = LowPassFilter(window_size=10, precision=2, entity=None, time_constant=10)
@@ -144,7 +226,9 @@ class TestFilterSensor(unittest.TestCase):
         """Test if range filter works."""
         lower = 10
         upper = 20
-        filt = RangeFilter(entity=None, lower_bound=lower, upper_bound=upper)
+        filt = RangeFilter(
+            entity=None, precision=2, lower_bound=lower, upper_bound=upper
+        )
         for unf_state in self.values:
             unf = float(unf_state.state)
             filtered = filt.filter_state(unf_state)
@@ -159,7 +243,9 @@ class TestFilterSensor(unittest.TestCase):
         """Test if range filter works with zeroes as bounds."""
         lower = 0
         upper = 0
-        filt = RangeFilter(entity=None, lower_bound=lower, upper_bound=upper)
+        filt = RangeFilter(
+            entity=None, precision=2, lower_bound=lower, upper_bound=upper
+        )
         for unf_state in self.values:
             unf = float(unf_state.state)
             filtered = filt.filter_state(unf_state)

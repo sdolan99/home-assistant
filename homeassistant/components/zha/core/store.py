@@ -1,16 +1,14 @@
 """Data storage helper for ZHA."""
-import logging
+# pylint: disable=unused-import
 from collections import OrderedDict
-
-# pylint: disable=W0611
-from typing import MutableMapping  # noqa: F401
-from typing import cast
+import logging
+from typing import MutableMapping, cast
 
 import attr
 
 from homeassistant.core import callback
-from homeassistant.loader import bind_hass
 from homeassistant.helpers.typing import HomeAssistantType
+from homeassistant.loader import bind_hass
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -36,7 +34,7 @@ class ZhaDeviceStorage:
     def __init__(self, hass: HomeAssistantType) -> None:
         """Initialize the zha device storage."""
         self.hass = hass
-        self.devices = {}  # type: MutableMapping[str, ZhaDeviceEntry]
+        self.devices: MutableMapping[str, ZhaDeviceEntry] = {}
         self._store = hass.helpers.storage.Store(STORAGE_VERSION, STORAGE_KEY)
 
     @callback
@@ -89,7 +87,7 @@ class ZhaDeviceStorage:
         """Load the registry of zha device entries."""
         data = await self._store.async_load()
 
-        devices = OrderedDict()  # type: OrderedDict[str, ZhaDeviceEntry]
+        devices: "OrderedDict[str, ZhaDeviceEntry]" = OrderedDict()
 
         if data is not None:
             for device in data["devices"]:

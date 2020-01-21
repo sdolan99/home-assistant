@@ -9,15 +9,14 @@ from homeassistant.helpers import entity
 from homeassistant.helpers.device_registry import CONNECTION_ZIGBEE
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.restore_state import RestoreEntity
-from homeassistant.util import slugify
 
 from .core.const import (
     ATTR_MANUFACTURER,
+    ATTR_MODEL,
+    ATTR_NAME,
     DATA_ZHA,
     DATA_ZHA_BRIDGE_ID,
     DOMAIN,
-    MODEL,
-    NAME,
     SIGNAL_REMOVE,
 )
 from .core.helpers import LogMixin
@@ -31,24 +30,15 @@ RESTART_GRACE_PERIOD = 7200  # 2 hours
 class ZhaEntity(RestoreEntity, LogMixin, entity.Entity):
     """A base class for ZHA entities."""
 
-    _domain = None  # Must be overridden by subclasses
-
     def __init__(self, unique_id, zha_device, channels, skip_entity_id=False, **kwargs):
         """Init ZHA entity."""
         self._force_update = False
         self._should_poll = False
         self._unique_id = unique_id
-        if not skip_entity_id:
-            ieee = zha_device.ieee
-            ieeetail = "".join(["%02x" % (o,) for o in ieee[-4:]])
-            self.entity_id = "{}.{}_{}_{}_{}{}".format(
-                self._domain,
-                slugify(zha_device.manufacturer),
-                slugify(zha_device.model),
-                ieeetail,
-                channels[0].cluster.endpoint.endpoint_id,
-                kwargs.get(ENTITY_SUFFIX, ""),
-            )
+        ieeetail = "".join([f"{o:02x}" for o in zha_device.ieee[:4]])
+        ch_names = [ch.cluster.ep_attribute for ch in channels]
+        ch_names = ", ".join(sorted(ch_names))
+        self._name = f"{zha_device.name} {ieeetail} {ch_names}"
         self._state = None
         self._device_state_attributes = {}
         self._zha_device = zha_device
@@ -63,7 +53,7 @@ class ZhaEntity(RestoreEntity, LogMixin, entity.Entity):
     @property
     def name(self):
         """Return Entity's default name."""
-        return self.zha_device.name
+        return self._name
 
     @property
     def unique_id(self) -> str:
@@ -99,8 +89,8 @@ class ZhaEntity(RestoreEntity, LogMixin, entity.Entity):
             "connections": {(CONNECTION_ZIGBEE, ieee)},
             "identifiers": {(DOMAIN, ieee)},
             ATTR_MANUFACTURER: zha_device_info[ATTR_MANUFACTURER],
-            MODEL: zha_device_info[MODEL],
-            NAME: zha_device_info[NAME],
+            ATTR_MODEL: zha_device_info[ATTR_MODEL],
+            ATTR_NAME: zha_device_info[ATTR_NAME],
             "via_device": (DOMAIN, self.hass.data[DATA_ZHA][DATA_ZHA_BRIDGE_ID]),
         }
 
@@ -189,12 +179,12 @@ class ZhaEntity(RestoreEntity, LogMixin, entity.Entity):
             unsub = async_dispatcher_connect(self.hass, signal, func)
         else:
             unsub = async_dispatcher_connect(
-                self.hass, "{}_{}".format(channel.unique_id, signal), func
+                self.hass, f"{channel.unique_id}_{signal}", func
             )
         self._unsubs.append(unsub)
 
     def log(self, level, msg, *args):
         """Log a message."""
-        msg = "%s: " + msg
+        msg = f"%s: {msg}"
         args = (self.entity_id,) + args
         _LOGGER.log(level, msg, *args)

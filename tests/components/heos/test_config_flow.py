@@ -1,10 +1,13 @@
 """Tests for the Heos config flow module."""
-import asyncio
+from urllib.parse import urlparse
+
+from pyheos import HeosError
 
 from homeassistant import data_entry_flow
+from homeassistant.components import ssdp
 from homeassistant.components.heos.config_flow import HeosFlowHandler
 from homeassistant.components.heos.const import DATA_DISCOVERED_HOSTS, DOMAIN
-from homeassistant.const import CONF_HOST, CONF_NAME
+from homeassistant.const import CONF_HOST
 
 
 async def test_flow_aborts_already_setup(hass, config_entry):
@@ -31,18 +34,15 @@ async def test_cannot_connect_shows_error_form(hass, controller):
     """Test form is shown with error when cannot connect."""
     flow = HeosFlowHandler()
     flow.hass = hass
-
-    errors = [ConnectionError, asyncio.TimeoutError]
-    for error in errors:
-        controller.connect.side_effect = error
-        result = await flow.async_step_user({CONF_HOST: "127.0.0.1"})
-        assert result["type"] == data_entry_flow.RESULT_TYPE_FORM
-        assert result["step_id"] == "user"
-        assert result["errors"][CONF_HOST] == "connection_failure"
-        assert controller.connect.call_count == 1
-        assert controller.disconnect.call_count == 1
-        controller.connect.reset_mock()
-        controller.disconnect.reset_mock()
+    controller.connect.side_effect = HeosError()
+    result = await flow.async_step_user({CONF_HOST: "127.0.0.1"})
+    assert result["type"] == data_entry_flow.RESULT_TYPE_FORM
+    assert result["step_id"] == "user"
+    assert result["errors"][CONF_HOST] == "connection_failure"
+    assert controller.connect.call_count == 1
+    assert controller.disconnect.call_count == 1
+    controller.connect.reset_mock()
+    controller.disconnect.reset_mock()
 
 
 async def test_create_entry_when_host_valid(hass, controller):
@@ -82,8 +82,9 @@ async def test_discovery_shows_create_form(hass, controller, discovery_data):
     assert len(hass.config_entries.flow.async_progress()) == 1
     assert hass.data[DATA_DISCOVERED_HOSTS] == {"Office (127.0.0.1)": "127.0.0.1"}
 
-    discovery_data[CONF_HOST] = "127.0.0.2"
-    discovery_data[CONF_NAME] = "Bedroom"
+    port = urlparse(discovery_data[ssdp.ATTR_SSDP_LOCATION]).port
+    discovery_data[ssdp.ATTR_SSDP_LOCATION] = f"http://127.0.0.2:{port}/"
+    discovery_data[ssdp.ATTR_UPNP_FRIENDLY_NAME] = "Bedroom"
     await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": "ssdp"}, data=discovery_data
     )

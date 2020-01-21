@@ -3,6 +3,7 @@ import asyncio
 import logging
 
 import async_timeout
+from pywemo import discovery
 import requests
 
 from homeassistant.components.binary_sensor import BinarySensorDevice
@@ -15,7 +16,6 @@ _LOGGER = logging.getLogger(__name__)
 
 def setup_platform(hass, config, add_entities, discovery_info=None):
     """Register discovered WeMo binary sensors."""
-    from pywemo import discovery
 
     if discovery_info is not None:
         location = discovery_info["ssdp_description"]
@@ -63,7 +63,7 @@ class WemoBinarySensor(BinarySensorDevice):
         self.async_schedule_update_ha_state()
 
     async def async_added_to_hass(self):
-        """Wemo sensor added to HASS."""
+        """Wemo sensor added to Home Assistant."""
         # Define inside async context so we know our event loop
         self._update_lock = asyncio.Lock()
 

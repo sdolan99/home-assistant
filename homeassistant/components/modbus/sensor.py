@@ -1,11 +1,13 @@
 """Support for Modbus Register sensors."""
 import logging
 import struct
+from typing import Any, Optional, Union
 
 import voluptuous as vol
 
-from homeassistant.components.sensor import PLATFORM_SCHEMA
+from homeassistant.components.sensor import DEVICE_CLASSES_SCHEMA, PLATFORM_SCHEMA
 from homeassistant.const import (
+    CONF_DEVICE_CLASS,
     CONF_NAME,
     CONF_OFFSET,
     CONF_SLAVE,
@@ -36,6 +38,26 @@ DATA_TYPE_UINT = "uint"
 REGISTER_TYPE_HOLDING = "holding"
 REGISTER_TYPE_INPUT = "input"
 
+
+def number(value: Any) -> Union[int, float]:
+    """Coerce a value to number without losing precision."""
+    if isinstance(value, int):
+        return value
+
+    if isinstance(value, str):
+        try:
+            value = int(value)
+            return value
+        except (TypeError, ValueError):
+            pass
+
+    try:
+        value = float(value)
+        return value
+    except (TypeError, ValueError):
+        raise vol.Invalid(f"invalid number {value}")
+
+
 PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
     {
         vol.Required(CONF_REGISTERS): [
@@ -46,14 +68,15 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
                 vol.Optional(CONF_DATA_TYPE, default=DATA_TYPE_INT): vol.In(
                     [DATA_TYPE_INT, DATA_TYPE_UINT, DATA_TYPE_FLOAT, DATA_TYPE_CUSTOM]
                 ),
+                vol.Optional(CONF_DEVICE_CLASS): DEVICE_CLASSES_SCHEMA,
                 vol.Optional(CONF_HUB, default=DEFAULT_HUB): cv.string,
-                vol.Optional(CONF_OFFSET, default=0): vol.Coerce(float),
+                vol.Optional(CONF_OFFSET, default=0): number,
                 vol.Optional(CONF_PRECISION, default=0): cv.positive_int,
                 vol.Optional(CONF_REGISTER_TYPE, default=REGISTER_TYPE_HOLDING): vol.In(
                     [REGISTER_TYPE_HOLDING, REGISTER_TYPE_INPUT]
                 ),
                 vol.Optional(CONF_REVERSE_ORDER, default=False): cv.boolean,
-                vol.Optional(CONF_SCALE, default=1): vol.Coerce(float),
+                vol.Optional(CONF_SCALE, default=1): number,
                 vol.Optional(CONF_SLAVE): cv.positive_int,
                 vol.Optional(CONF_STRUCTURE): cv.string,
                 vol.Optional(CONF_UNIT_OF_MEASUREMENT): cv.string,
@@ -79,7 +102,7 @@ def setup_platform(hass, config, add_entities, discovery_info=None):
                 )
             except KeyError:
                 _LOGGER.error(
-                    "Unable to detect data type for %s sensor, " "try a custom type",
+                    "Unable to detect data type for %s sensor, try a custom type",
                     register.get(CONF_NAME),
                 )
                 continue
@@ -96,7 +119,7 @@ def setup_platform(hass, config, add_entities, discovery_info=None):
 
         if register.get(CONF_COUNT) * 2 != size:
             _LOGGER.error(
-                "Structure size (%d bytes) mismatch registers count " "(%d words)",
+                "Structure size (%d bytes) mismatch registers count (%d words)",
                 size,
                 register.get(CONF_COUNT),
             )
@@ -118,6 +141,7 @@ def setup_platform(hass, config, add_entities, discovery_info=None):
                 register.get(CONF_OFFSET),
                 structure,
                 register.get(CONF_PRECISION),
+                register.get(CONF_DEVICE_CLASS),
             )
         )
 
@@ -143,6 +167,7 @@ class ModbusRegisterSensor(RestoreEntity):
         offset,
         structure,
         precision,
+        device_class,
     ):
         """Initialize the modbus register sensor."""
         self._hub = hub
@@ -157,6 +182,7 @@ class ModbusRegisterSensor(RestoreEntity):
         self._offset = offset
         self._precision = precision
         self._structure = structure
+        self._device_class = device_class
         self._value = None
 
     async def async_added_to_hass(self):
@@ -180,6 +206,11 @@ class ModbusRegisterSensor(RestoreEntity):
     def unit_of_measurement(self):
         """Return the unit of measurement."""
         return self._unit_of_measurement
+
+    @property
+    def device_class(self) -> Optional[str]:
+        """Return the device class of the sensor."""
+        return self._device_class
 
     def update(self):
         """Update the state of the sensor."""
@@ -207,6 +238,10 @@ class ModbusRegisterSensor(RestoreEntity):
             return
         byte_string = b"".join([x.to_bytes(2, byteorder="big") for x in registers])
         val = struct.unpack(self._structure, byte_string)[0]
-        self._value = format(
-            self._scale * val + self._offset, ".{}f".format(self._precision)
-        )
+        val = self._scale * val + self._offset
+        if isinstance(val, int):
+            self._value = str(val)
+            if self._precision > 0:
+                self._value += "." + "0" * self._precision
+        else:
+            self._value = f"{val:.{self._precision}f}"

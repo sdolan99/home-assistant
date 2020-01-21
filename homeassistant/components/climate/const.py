@@ -97,7 +97,7 @@ ATTR_MAX_HUMIDITY = "max_humidity"
 ATTR_MIN_HUMIDITY = "min_humidity"
 ATTR_MAX_TEMP = "max_temp"
 ATTR_MIN_TEMP = "min_temp"
-ATTR_HVAC_ACTIONS = "hvac_action"
+ATTR_HVAC_ACTION = "hvac_action"
 ATTR_HVAC_MODES = "hvac_modes"
 ATTR_HVAC_MODE = "hvac_mode"
 ATTR_SWING_MODES = "swing_modes"
@@ -108,7 +108,7 @@ ATTR_TARGET_TEMP_STEP = "target_temp_step"
 
 DEFAULT_MIN_TEMP = 7
 DEFAULT_MAX_TEMP = 35
-DEFAULT_MIN_HUMITIDY = 30
+DEFAULT_MIN_HUMIDITY = 30
 DEFAULT_MAX_HUMIDITY = 99
 
 DOMAIN = "climate"

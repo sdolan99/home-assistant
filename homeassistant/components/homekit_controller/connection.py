@@ -3,10 +3,18 @@ import asyncio
 import datetime
 import logging
 
+from homekit.controller.ip_implementation import IpPairing
+from homekit.exceptions import (
+    AccessoryDisconnectedError,
+    AccessoryNotFoundError,
+    EncryptionError,
+)
+from homekit.model.characteristics import CharacteristicsTypes
+from homekit.model.services import ServicesTypes
+
 from homeassistant.helpers.event import async_track_time_interval
 
-from .const import DOMAIN, HOMEKIT_ACCESSORY_DISPATCH, ENTITY_MAP
-
+from .const import DOMAIN, ENTITY_MAP, HOMEKIT_ACCESSORY_DISPATCH
 
 DEFAULT_SCAN_INTERVAL = datetime.timedelta(seconds=60)
 RETRY_INTERVAL = 60  # seconds
@@ -16,10 +24,6 @@ _LOGGER = logging.getLogger(__name__)
 
 def get_accessory_information(accessory):
     """Obtain the accessory information service of a HomeKit device."""
-    # pylint: disable=import-error
-    from homekit.model.services import ServicesTypes
-    from homekit.model.characteristics import CharacteristicsTypes
-
     result = {}
     for service in accessory["services"]:
         stype = service["type"].upper()
@@ -53,7 +57,6 @@ class HKDevice:
 
     def __init__(self, hass, config_entry, pairing_data):
         """Initialise a generic HomeKit device."""
-        from homekit.controller.ip_implementation import IpPairing
 
         self.hass = hass
         self.config_entry = config_entry
@@ -99,6 +102,10 @@ class HKDevice:
         # this method.
         self._polling_interval_remover = None
 
+        # Never allow concurrent polling of the same accessory or bridge
+        self._polling_lock = asyncio.Lock()
+        self._polling_lock_warned = False
+
     def add_pollable_characteristics(self, characteristics):
         """Add (aid, iid) pairs that we need to poll."""
         self.pollable_characteristics.extend(characteristics)
@@ -115,7 +122,7 @@ class HKDevice:
         self.hass.helpers.dispatcher.async_dispatcher_send(self.signal_state_updated)
 
     async def async_setup(self):
-        """Prepare to use a paired HomeKit device in homeassistant."""
+        """Prepare to use a paired HomeKit device in Home Assistant."""
         cache = self.hass.data[ENTITY_MAP].get_map(self.unique_id)
         if not cache:
             if await self.async_refresh_entity_map(self.config_num):
@@ -128,19 +135,32 @@ class HKDevice:
         self.accessories = cache["accessories"]
         self.config_num = cache["config_num"]
 
-        # Ensure the Pairing object has access to the latest version of the
-        # entity map.
+        self._polling_interval_remover = async_track_time_interval(
+            self.hass, self.async_update, DEFAULT_SCAN_INTERVAL
+        )
+
+        self.hass.async_create_task(self.async_process_entity_map())
+
+        return True
+
+    async def async_process_entity_map(self):
+        """
+        Process the entity map and load any platforms or entities that need adding.
+
+        This is idempotent and will be called at startup and when we detect metadata changes
+        via the c# counter on the zeroconf record.
+        """
+        # Ensure the Pairing object has access to the latest version of the entity map. This
+        # is especially important for BLE, as the Pairing instance relies on the entity map
+        # to map aid/iid to GATT characteristics. So push it to there as well.
+
         self.pairing.pairing_data["accessories"] = self.accessories
 
-        self.async_load_platforms()
+        await self.async_load_platforms()
 
         self.add_entities()
 
         await self.async_update()
-
-        self._polling_interval_remover = async_track_time_interval(
-            self.hass, self.async_update, DEFAULT_SCAN_INTERVAL
-        )
 
         return True
 
@@ -163,9 +183,6 @@ class HKDevice:
 
     async def async_refresh_entity_map(self, config_num):
         """Handle setup of a HomeKit accessory."""
-        # pylint: disable=import-error
-        from homekit.exceptions import AccessoryDisconnectedError
-
         try:
             async with self.pairing_lock:
                 self.accessories = await self.hass.async_add_executor_job(
@@ -174,24 +191,14 @@ class HKDevice:
         except AccessoryDisconnectedError:
             # If we fail to refresh this data then we will naturally retry
             # later when Bonjour spots c# is still not up to date.
-            return
+            return False
 
         self.hass.data[ENTITY_MAP].async_create_or_update_map(
             self.unique_id, config_num, self.accessories
         )
 
         self.config_num = config_num
-
-        # For BLE, the Pairing instance relies on the entity map to map
-        # aid/iid to GATT characteristics. So push it to there as well.
-        self.pairing.pairing_data["accessories"] = self.accessories
-
-        self.async_load_platforms()
-
-        # Register and add new entities that are available
-        self.add_entities()
-
-        await self.async_update()
+        self.hass.async_create_task(self.async_process_entity_map())
 
         return True
 
@@ -205,8 +212,6 @@ class HKDevice:
         self._add_new_entities(self.listeners)
 
     def _add_new_entities(self, callbacks):
-        from homekit.model.services import ServicesTypes
-
         for accessory in self.accessories:
             aid = accessory["aid"]
             for service in accessory["services"]:
@@ -223,10 +228,8 @@ class HKDevice:
                         self.entities.append((aid, iid))
                         break
 
-    def async_load_platforms(self):
+    async def async_load_platforms(self):
         """Load any platforms needed by this HomeKit device."""
-        from homekit.model.services import ServicesTypes
-
         for accessory in self.accessories:
             for service in accessory["services"]:
                 stype = ServicesTypes.get_short(service["type"].upper())
@@ -237,42 +240,58 @@ class HKDevice:
                 if platform in self.platforms:
                     continue
 
-                self.hass.async_create_task(
-                    self.hass.config_entries.async_forward_entry_setup(
+                self.platforms.add(platform)
+                try:
+                    await self.hass.config_entries.async_forward_entry_setup(
                         self.config_entry, platform
                     )
-                )
-                self.platforms.add(platform)
+                except Exception:
+                    self.platforms.remove(platform)
+                    raise
 
     async def async_update(self, now=None):
         """Poll state of all entities attached to this bridge/accessory."""
-        # pylint: disable=import-error
-        from homekit.exceptions import (
-            AccessoryDisconnectedError,
-            AccessoryNotFoundError,
-            EncryptionError,
-        )
-
         if not self.pollable_characteristics:
             _LOGGER.debug("HomeKit connection not polling any characteristics.")
             return
 
-        _LOGGER.debug("Starting HomeKit controller update")
+        if self._polling_lock.locked():
+            if not self._polling_lock_warned:
+                _LOGGER.warning(
+                    "HomeKit controller update skipped as previous poll still in flight"
+                )
+                self._polling_lock_warned = True
+            return
 
-        try:
-            new_values_dict = await self.get_characteristics(
-                self.pollable_characteristics
+        if self._polling_lock_warned:
+            _LOGGER.info(
+                "HomeKit controller no longer detecting back pressure - not skipping poll"
             )
-        except AccessoryNotFoundError:
-            # Not only did the connection fail, but also the accessory is not
-            # visible on the network.
-            self.async_set_unavailable()
-            return
-        except (AccessoryDisconnectedError, EncryptionError):
-            # Temporary connection failure. Device is still available but our
-            # connection was dropped.
-            return
+            self._polling_lock_warned = False
 
+        async with self._polling_lock:
+            _LOGGER.debug("Starting HomeKit controller update")
+
+            try:
+                new_values_dict = await self.get_characteristics(
+                    self.pollable_characteristics
+                )
+            except AccessoryNotFoundError:
+                # Not only did the connection fail, but also the accessory is not
+                # visible on the network.
+                self.async_set_unavailable()
+                return
+            except (AccessoryDisconnectedError, EncryptionError):
+                # Temporary connection failure. Device is still available but our
+                # connection was dropped.
+                return
+
+            self.process_new_events(new_values_dict)
+
+            _LOGGER.debug("Finished HomeKit controller update")
+
+    def process_new_events(self, new_values_dict):
+        """Process events from accessory into HA state."""
         self.available = True
 
         for (aid, cid), value in new_values_dict.items():
@@ -280,8 +299,6 @@ class HKDevice:
             accessory[cid] = value
 
         self.hass.helpers.dispatcher.async_dispatcher_send(self.signal_state_updated)
-
-        _LOGGER.debug("Finished HomeKit controller update")
 
     async def get_characteristics(self, *args, **kwargs):
         """Read latest state from homekit accessory."""
@@ -298,9 +315,29 @@ class HKDevice:
             chars.append((row["aid"], row["iid"], row["value"]))
 
         async with self.pairing_lock:
-            await self.hass.async_add_executor_job(
+            results = await self.hass.async_add_executor_job(
                 self.pairing.put_characteristics, chars
             )
+
+        # Feed characteristics back into HA and update the current state
+        # results will only contain failures, so anythin in characteristics
+        # but not in results was applied successfully - we can just have HA
+        # reflect the change immediately.
+
+        new_entity_state = {}
+        for row in characteristics:
+            key = (row["aid"], row["iid"])
+
+            # If the key was returned by put_characteristics() then the
+            # change didnt work
+            if key in results:
+                continue
+
+            # Otherwise it was accepted and we can apply the change to
+            # our state
+            new_entity_state[key] = {"value": row["value"]}
+
+        self.process_new_events(new_entity_state)
 
     @property
     def unique_id(self):

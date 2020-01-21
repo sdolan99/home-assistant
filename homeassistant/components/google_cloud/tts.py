@@ -1,11 +1,11 @@
 """Support for the Google Cloud TTS service."""
+import asyncio
 import logging
 import os
 
-import asyncio
 import async_timeout
-import voluptuous as vol
 from google.cloud import texttospeech
+import voluptuous as vol
 
 from homeassistant.components.tts import CONF_LANG, PLATFORM_SCHEMA, Provider
 import homeassistant.helpers.config_validation as cv
@@ -122,7 +122,7 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
 )
 
 
-async def async_get_engine(hass, config):
+async def async_get_engine(hass, config, discovery_info=None):
     """Set up Google Cloud TTS component."""
     key_file = config.get(CONF_KEY_FILE)
     if key_file:
@@ -256,6 +256,6 @@ class GoogleCloudTTSProvider(Provider):
         except asyncio.TimeoutError as ex:
             _LOGGER.error("Timeout for Google Cloud TTS call: %s", ex)
         except Exception as ex:  # pylint: disable=broad-except
-            _LOGGER.exception("Error occured during Google Cloud TTS call: %s", ex)
+            _LOGGER.exception("Error occurred during Google Cloud TTS call: %s", ex)
 
         return None, None

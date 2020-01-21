@@ -1,18 +1,20 @@
 """Support for August devices."""
-import logging
 from datetime import timedelta
+import logging
 
+from august.api import Api
+from august.authenticator import AuthenticationState, Authenticator, ValidationResult
+from requests import RequestException, Session
 import voluptuous as vol
-from requests import RequestException
 
-import homeassistant.helpers.config_validation as cv
 from homeassistant.const import (
     CONF_PASSWORD,
-    CONF_USERNAME,
     CONF_TIMEOUT,
+    CONF_USERNAME,
     EVENT_HOMEASSISTANT_STOP,
 )
 from homeassistant.helpers import discovery
+import homeassistant.helpers.config_validation as cv
 from homeassistant.util import Throttle
 
 _LOGGER = logging.getLogger(__name__)
@@ -62,7 +64,6 @@ def request_configuration(hass, config, api, authenticator):
 
     def august_configuration_callback(data):
         """Run when the configuration callback is called."""
-        from august.authenticator import ValidationResult
 
         result = authenticator.validate_verification_code(data.get("verification_code"))
 
@@ -94,7 +95,6 @@ def request_configuration(hass, config, api, authenticator):
 
 def setup_august(hass, config, api, authenticator):
     """Set up the August component."""
-    from august.authenticator import AuthenticationState
 
     authentication = None
     try:
@@ -134,9 +134,6 @@ def setup_august(hass, config, api, authenticator):
 
 def setup(hass, config):
     """Set up the August component."""
-    from august.api import Api
-    from august.authenticator import Authenticator
-    from requests import Session
 
     conf = config[DOMAIN]
     api_http_session = None
@@ -168,7 +165,7 @@ def setup(hass, config):
         _LOGGER.debug("August HTTP session closed.")
 
     hass.bus.listen_once(EVENT_HOMEASSISTANT_STOP, close_http_session)
-    _LOGGER.debug("Registered for HASS stop event")
+    _LOGGER.debug("Registered for Home Assistant stop event")
 
     return setup_august(hass, config, api, authenticator)
 
@@ -257,7 +254,7 @@ class AugustData:
                 )
             except RequestException as ex:
                 _LOGGER.error(
-                    "Request error trying to retrieve doorbell" " status for %s. %s",
+                    "Request error trying to retrieve doorbell status for %s. %s",
                     doorbell.device_name,
                     ex,
                 )
@@ -304,7 +301,7 @@ class AugustData:
                 )
             except RequestException as ex:
                 _LOGGER.error(
-                    "Request error trying to retrieve door" " status for %s. %s",
+                    "Request error trying to retrieve door status for %s. %s",
                     lock.device_name,
                     ex,
                 )
@@ -330,7 +327,7 @@ class AugustData:
                 )
             except RequestException as ex:
                 _LOGGER.error(
-                    "Request error trying to retrieve door" " status for %s. %s",
+                    "Request error trying to retrieve door status for %s. %s",
                     lock.device_name,
                     ex,
                 )
@@ -345,7 +342,7 @@ class AugustData:
                 )
             except RequestException as ex:
                 _LOGGER.error(
-                    "Request error trying to retrieve door" " details for %s. %s",
+                    "Request error trying to retrieve door details for %s. %s",
                     lock.device_name,
                     ex,
                 )

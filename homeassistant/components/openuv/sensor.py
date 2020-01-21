@@ -97,8 +97,8 @@ class OpenUvSensor(OpenUvEntity):
 
     @property
     def unique_id(self) -> str:
-        """Return a unique, HASS-friendly identifier for this entity."""
-        return "{0}_{1}_{2}".format(self._latitude, self._longitude, self._sensor_type)
+        """Return a unique, Home Assistant friendly identifier for this entity."""
+        return f"{self._latitude}_{self._longitude}_{self._sensor_type}"
 
     @property
     def unit_of_measurement(self):

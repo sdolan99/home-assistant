@@ -159,10 +159,10 @@ class Life360Scanner:
         _errs = self._errs.get(key, 0)
         if _errs < self._max_errs:
             self._errs[key] = _errs = _errs + 1
-            msg = "{}: {}".format(key, err_msg)
+            msg = f"{key}: {err_msg}"
             if _errs >= self._error_threshold:
                 if _errs == self._max_errs:
-                    msg = "Suppressing further errors until OK: " + msg
+                    msg = f"Suppressing further errors until OK: {msg}"
                 _LOGGER.error(msg)
             elif _errs >= self._warning_threshold:
                 _LOGGER.warning(msg)
@@ -195,7 +195,10 @@ class Life360Scanner:
                 )
                 reported = False
 
-        self._dev_data[dev_id] = last_seen or prev_seen, reported
+        # Don't remember last_seen unless it's really an update.
+        if not last_seen or prev_seen and last_seen <= prev_seen:
+            last_seen = prev_seen
+        self._dev_data[dev_id] = last_seen, reported
 
         return prev_seen
 
@@ -218,7 +221,17 @@ class Life360Scanner:
             return
 
         # Only update when we truly have an update.
-        if not last_seen or prev_seen and last_seen <= prev_seen:
+        if not last_seen:
+            _LOGGER.warning("%s: Ignoring update because timestamp is missing", dev_id)
+            return
+        if prev_seen and last_seen < prev_seen:
+            _LOGGER.warning(
+                "%s: Ignoring update because timestamp is older than last timestamp",
+                dev_id,
+            )
+            _LOGGER.debug("%s < %s", last_seen, prev_seen)
+            return
+        if last_seen == prev_seen:
             return
 
         lat = loc.get("latitude")
@@ -233,14 +246,12 @@ class Life360Scanner:
                 convert(float(gps_accuracy), LENGTH_FEET, LENGTH_METERS)
             )
         except (TypeError, ValueError):
-            self._err(
-                dev_id, "GPS data invalid: {}, {}, {}".format(lat, lon, gps_accuracy)
-            )
+            self._err(dev_id, f"GPS data invalid: {lat}, {lon}, {gps_accuracy}")
             return
 
         self._ok(dev_id)
 
-        msg = "Updating {}".format(dev_id)
+        msg = f"Updating {dev_id}"
         if prev_seen:
             msg += "; Time since last update: {}".format(last_seen - prev_seen)
         _LOGGER.debug(msg)
@@ -401,7 +412,7 @@ class Life360Scanner:
                     except (Life360Error, KeyError):
                         pass
                 if incl_circle:
-                    err_key = 'get_circle_members "{}"'.format(circle_name)
+                    err_key = f'get_circle_members "{circle_name}"'
                     try:
                         members = api.get_circle_members(circle_id)
                     except Life360Error as exc:
